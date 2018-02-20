@@ -43,7 +43,7 @@ randomic algorithm:
 #include <stdint.h>
 
 //types
-typedef _Atomic struct randomic {
+typedef _Atomic struct randomic_ctx {
     uint32_t a, b, c, d;
 } randomic;
 
@@ -57,12 +57,12 @@ RADEF uint32_t randomicNext(randomic*);
 #ifdef RANDOMIC_IMPLEMENTATION
 
 //function declarations
-static struct randomic randomicStep(struct randomic);
+static struct randomic_ctx randomicStep(struct randomic_ctx);
 
 //public functions
 RADEF void randomicSeed (randomic* rdic, uint32_t seed) {
     //initialization as per smallprng algorithm
-    struct randomic ctx;
+    struct randomic_ctx ctx;
     ctx.a = 0xf1ea5eed;
     ctx.b = ctx.c = ctx.d = seed;
     for (int i = 0; i < 20; i++)
@@ -82,13 +82,13 @@ RADEF double randomicDouble (randomic* rdic, double a, double b) {
 }
 RADEF uint32_t randomicNext (randomic* rdic) {
     //returns a random uint32 (raw output of the generator)
-    struct randomic ctx = atomic_load(rdic), ntx;
+    struct randomic_ctx ctx = atomic_load(rdic), ntx;
     while (!atomic_compare_exchange_weak(rdic, &ctx, (ntx = randomicStep(ctx))));
     return ntx.d;
 }
 
 //internal functions
-static struct randomic randomicStep (struct randomic ctx) {
+static struct randomic_ctx randomicStep (struct randomic_ctx ctx) {
     //advances the PRNG state by a single step
     uint32_t e = ctx.a - ((ctx.b << 27)|(ctx.b >> 5));
     ctx.a = ctx.b ^ ((ctx.c << 17)|(ctx.c >> 15));
