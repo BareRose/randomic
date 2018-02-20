@@ -57,31 +57,39 @@ RADEF uint32_t randomicNext(randomic*);
 #ifdef RANDOMIC_IMPLEMENTATION
 
 //function declarations
-static struct randomic randomicInternal(struct randomic);
+static struct randomic randomicStep(struct randomic);
 
 //public functions
 RADEF void randomicSeed (randomic* rdic, uint32_t seed) {
+    //initialization as per smallprng algorithm
     struct randomic ctx;
     ctx.a = 0xf1ea5eed;
     ctx.b = ctx.c = ctx.d = seed;
     for (int i = 0; i < 20; i++)
-        ctx = randomicInternal(ctx);
+        ctx = randomicStep(ctx);
+    //store initialized state atomically
     atomic_store(rdic, ctx);
 }
 RADEF float randomicFloat (randomic* rdic, float a, float b) {
+    //returns a random float between a and b (inclusive on both ends)
+    //distribution is not entirely perfect due to floating point
     return a + (b-a)*((float)randomicNext(rdic)/(float)UINT32_MAX);
 }
 RADEF double randomicDouble (randomic* rdic, double a, double b) {
+    //returns a random double between a and b (inclusive on both ends)
+    //distribution is not entirely perfect due to floating point
     return a + (b-a)*((double)randomicNext(rdic)/(double)UINT32_MAX);
 }
 RADEF uint32_t randomicNext (randomic* rdic) {
+    //returns a random uint32 (raw output of the generator)
     struct randomic ctx = atomic_load(rdic), ntx;
-    while (!atomic_compare_exchange_weak(rdic, &ctx, (ntx = randomicInternal(ctx))));
+    while (!atomic_compare_exchange_weak(rdic, &ctx, (ntx = randomicStep(ctx))));
     return ntx.d;
 }
 
 //internal functions
-static struct randomic randomicInternal (struct randomic ctx) {
+static struct randomic randomicStep (struct randomic ctx) {
+    //advances the PRNG state by a single step
     uint32_t e = ctx.a - ((ctx.b << 27)|(ctx.b >> 5));
     ctx.a = ctx.b ^ ((ctx.c << 17)|(ctx.c >> 15));
     ctx.b = ctx.c + ctx.d;
