@@ -17,9 +17,19 @@ randomic supports the following three configurations:
     Defines all randomic functions as static, useful if randomic is only used in a single compilation unit.
 
 randomic usage:
-    The randomic type represents a PRNG context and should be initialized using randomicSeed before being used for anything.
-    Usually you'll want either randomicFloat or randomicDouble, which return a random number in the given range (inclusive).
+    The struct randomic type represents a PRNG context and should be initialized and seeded using randomicSeed before usage.
+    Usually you'll want either randomicFloatCO/CC or randomicDoubleCO/CC, which return pseudo-random numbers between 0.0 and 1.0.
+    The suffix CO indicates a half-open range [0.0, 1.0) (including 0.0 but not 1.0), CC a closed one (including 0.0 and 1.0).
+    For percentage chances the CO functions should be used, e.g. if (randomicFloat(...) < 0.5f) for a uniform 50% probability.
+    For inclusive ranges the CC functions should be used, e.g. randomicFloat(...)*12.0f for an inclusive range of [0.0, 12.0].
     If needed randomicNext can be used to get the raw uint32 output of the pseudo-random generator (from 0 to UINT32_MAX).
+
+randomic details:
+    For float, randomicFloatCO produces one of 2^24 possible values with perfect uniformity in its half-open range [0.0, 1.0),
+    whereas randomicFloatCC uses more of float's total precision at a loss of uniformity and provides a closed range [0.0, 1.0].
+    For double, randomicDoubleCO produces one of 2^32 possible values with perfect uniformity in its half-open range [0.0, 1.0),
+    whereas randomicDoubleCC also produces one of 2^32 possible values with possibly less uniformity but a closed range [0.0, 1.0].
+    With only 2^32 possible values these do not use all of double's available precision, but only require one call to randomicNext.
 
 randomic algorithm:
     Randomic uses the smallprng algorithm from http://burtleburtle.net/bob/rand/smallprng.html as it is public domain, which the
@@ -42,16 +52,20 @@ randomic algorithm:
 #include <stdatomic.h>
 #include <stdint.h>
 
-//types
-typedef _Atomic struct randomic_ctx {
-    uint32_t a, b, c, d;
-} randomic;
+//structs
+struct randomic {
+    _Atomic struct randomic_ctx {
+        uint32_t a, b, c, d;
+    } ctx;
+};
 
 //function declarations
-RADEF void randomicSeed(randomic*, uint32_t);
-RADEF float randomicFloat(randomic*, float, float);
-RADEF double randomicDouble(randomic*, double, double);
-RADEF uint32_t randomicNext(randomic*);
+RADEF void randomicSeed(struct randomic*, uint32_t);
+RADEF float randomicFloatCO(struct randomic*);
+RADEF float randomicFloatCC(struct randomic*);
+RADEF double randomicDoubleCO(struct randomic*);
+RADEF double randomicDoubleCC(struct randomic*);
+RADEF uint32_t randomicNext(struct randomic*);
 
 //implementation section
 #ifdef RANDOMIC_IMPLEMENTATION
@@ -60,7 +74,7 @@ RADEF uint32_t randomicNext(randomic*);
 static struct randomic_ctx randomicStep(struct randomic_ctx);
 
 //public functions
-RADEF void randomicSeed (randomic* rdic, uint32_t seed) {
+RADEF void randomicSeed (struct randomic* rdic, uint32_t seed) {
     //initialization as per smallprng algorithm
     struct randomic_ctx ctx;
     ctx.a = 0xf1ea5eed;
@@ -68,22 +82,32 @@ RADEF void randomicSeed (randomic* rdic, uint32_t seed) {
     for (int i = 0; i < 20; i++)
         ctx = randomicStep(ctx);
     //store initialized state atomically
-    atomic_store(rdic, ctx);
+    atomic_store(&rdic->ctx, ctx);
 }
-RADEF float randomicFloat (randomic* rdic, float a, float b) {
-    //returns a random float between a and b (inclusive on both ends)
-    //distribution is not entirely perfect due to floating point
-    return a + (b-a)*((float)randomicNext(rdic)/(float)UINT32_MAX);
+RADEF float randomicFloatCO (struct randomic* rdic) {
+    //returns a random float in the range [0.0, 1.0) (not including 1.0)
+    //provides perfect uniformity but only 2^24 of 2^32 possible values
+    return (float)(randomicNext(rdic) >> 8)/16777216.0f;
 }
-RADEF double randomicDouble (randomic* rdic, double a, double b) {
-    //returns a random double between a and b (inclusive on both ends)
-    //distribution is not entirely perfect due to floating point
-    return a + (b-a)*((double)randomicNext(rdic)/(double)UINT32_MAX);
+RADEF float randomicFloatCC (struct randomic* rdic) {
+    //returns a random float in the range [0.0, 1.0] (including 0.0 and 1.0)
+    //uses more of float's available precision at the cost of uniformity
+    return (float)randomicNext(rdic)/(float)UINT32_MAX;
 }
-RADEF uint32_t randomicNext (randomic* rdic) {
+RADEF double randomicDoubleCO (struct randomic* rdic) {
+    //returns a random double in the range [0.0, 1.0) (not including 1.0)
+    //provides perfect uniformity with a full 2^32 possible values
+    return (double)randomicNext(rdic)/4294967296.0;
+}
+RADEF double randomicDoubleCC (struct randomic* rdic) {
+    //returns a random double in the range [0.0, 1.0] (including 0.0 and 1.0)
+    //provides possibly less uniformity as a result of the odd division
+    return (double)randomicNext(rdic)/(double)UINT32_MAX;
+}
+RADEF uint32_t randomicNext (struct randomic* rdic) {
     //returns a random uint32 (raw output of the generator)
-    struct randomic_ctx ctx = atomic_load(rdic), ntx;
-    while (!atomic_compare_exchange_weak(rdic, &ctx, (ntx = randomicStep(ctx))));
+    struct randomic_ctx ctx = atomic_load(&rdic->ctx), ntx;
+    while (!atomic_compare_exchange_weak(&rdic->ctx, &ctx, (ntx = randomicStep(ctx))));
     return ntx.d;
 }
 
